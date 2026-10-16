@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Search Engine</title>
+  <link rel="icon" type="image/png" href="/static/icon/favicon-senior.png">
+
+  <!-- Bootstrap: one line gives us a responsive, professional look. -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet" />
+
+  <style>
+    body { background: #f1f3f5; }
+    .excerpt { white-space: pre-wrap; }
+    mark { background: #fde68a; padding: 0 2px; border-radius: 2px; }
+
+    /* Each "view" (search / upload / files / evaluate). One shows at a time. */
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* Confusion-matrix cells. */
+    .cm-cell { padding: 14px; border-radius: 6px; color: #fff; text-align: center; }
+    .cm-good { background: #198754; }
+    .cm-bad  { background: #dc3545; }
+
+    /* Red error toast that slides in at the top and fades out. */
+    .error-toast {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: #dc3545;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s, transform 0.3s;
+      z-index: 1080;
+    }
+    .error-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Red error toast (hidden until showError is called) -->
+  <div id="errorToast" class="error-toast"></div>
+
+  <!-- Navbar with the four views -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+    <div class="container">
+      <span class="navbar-brand">📄 PDF Search Engine</span>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+              data-bs-target="#navLinks">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navLinks">
+        <ul class="navbar-nav ms-auto">
+          <li class="nav-item">
+            <a class="nav-link active" id="nav-search" href="#"
+               onclick="showSection('search')">Search</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" id="nav-upload" href="#"
+               onclick="showSection('upload')">Upload File</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" id="nav-files" href="#"
+               onclick="showSection('files')">Files List</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" id="nav-evaluate" href="#"
+               onclick="showSection('evaluate')">Evaluation</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container" style="max-width: 760px;">
+
+    <!-- ===== SEARCH VIEW (shown first) ===== -->
+    <section id="section-search" class="view active">
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <div class="input-group">
+            <input type="text" id="queryInput" class="form-control form-control-lg"
+                   placeholder="Search your PDFs..."
+                   onkeydown="if(event.key==='Enter') runSearch()" />
+            <button onclick="runSearch()" class="btn btn-primary">Search</button>
+          </div>
+        </div>
+      </div>
+      <div id="results"></div>
+    </section>
+
+    <!-- ===== UPLOAD VIEW ===== -->
+    <section id="section-upload" class="view">
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h5 class="card-title">Upload PDFs</h5>
+          <input type="file" id="fileInput" accept=".pdf" multiple class="form-control mb-2" />
+          <button onclick="uploadFiles()" class="btn btn-primary">Upload</button>
+          <p id="uploadStatus" class="text-muted mt-2 mb-0 small"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FILES LIST VIEW ===== -->
+    <section id="section-files" class="view">
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h5 class="card-title d-flex justify-content-between align-items-center">
+            Indexed Documents
+            <button id="adminBtn" class="btn btn-sm btn-outline-secondary"
+                    onclick="toggleAdmin()">Admin mode</button>
+          </h5>
+          <!-- Password box, shown only when unlocking admin mode -->
+          <div id="adminBox" class="input-group input-group-sm mb-3" style="display:none;">
+            <input type="password" id="adminPass" class="form-control"
+                   placeholder="Admin password"
+                   onkeydown="if(event.key==='Enter') unlockAdmin()" />
+            <button class="btn btn-primary" onclick="unlockAdmin()">Unlock</button>
+          </div>
+          <div id="library"><span class="text-muted small">Loading...</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== EVALUATION VIEW ===== -->
+    <section id="section-evaluate" class="view">
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h5 class="card-title">Search Quality Evaluation</h5>
+          <!-- <p class="text-muted small mb-3">
+            
+          </p> -->
+          <button onclick="runEvaluation()" class="btn btn-primary">Run Evaluation</button>
+        </div>
+      </div>
+      <div id="evalResults"></div>
+    </section>
+
+  </div>
+
+  <script>
+    // --- Navigation: show one view, hide the others, highlight the tab ---
+    function showSection(name) {
+      for (const view of document.querySelectorAll(".view")) {
+        view.classList.remove("active");
+      }
+      for (const link of document.querySelectorAll(".nav-link")) {
+        link.classList.remove("active");
+      }
+      document.getElementById("section-" + name).classList.add("active");
+      document.getElementById("nav-" + name).classList.add("active");
+
+      if (name === "files") {
+        loadDocuments();  // refresh the file list when opened
+      }
+    }
+
+    // Shows a red toast at the top of the page that fades out after 3 seconds.
+    let errorToastTimer;
+    function showError(message) {
+      const toast = document.getElementById("errorToast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(errorToastTimer);
+      errorToastTimer = setTimeout(() => toast.classList.remove("show"), 3000);
+    }
+
+    // --- Upload: send selected PDFs to the /upload endpoint ---
+    async function uploadFiles() {
+      const input = document.getElementById("fileInput");
+      const status = document.getElementById("uploadStatus");
+
+      if (input.files.length === 0) {
+        showError("Please select at least one PDF file.");
+        return;
+      }
+
+      const formData = new FormData();
+      for (const file of input.files) {
+        formData.append("files", file);
+      }
+
+      status.textContent = "Uploading...";
+
+      const response = await fetch("/upload", { method: "POST", body: formData });
+      const data = await response.json();
+
+      // const indexed = data.files.filter(f => f.status === "indexed").length;
+      // const duplicates = data.files.filter(f => f.status === "duplicate").length;
+      // status.textContent =
+      //   `Indexed ${indexed} new file(s), ${duplicates} already existed. ` +
+      //   `Total chunks stored: ${data.total_chunks_in_store}.`;
+      status.textContent = `uploaded successfully`;
+      loadDocuments();  // keep the file list up to date
+      // setTimeout(()=>showSection('search'),4000);
+    }
+
+    // --- Library: fetch and display the list of indexed PDFs ---
+    async function loadDocuments() {
+      const libraryDiv = document.getElementById("library");
+      const response = await fetch("/documents");
+      const data = await response.json();
+
+      if (data.count === 0) {
+        libraryDiv.innerHTML =
+          '<span class="text-muted small">No documents uploaded yet.</span>';
+        return;
+      }
+
+      let html = '<ul class="list-group">';
+      for (const doc of data.documents) {
+        const pdfUrl = `/pdfs/${encodeURIComponent(doc.filename)}`;
+        const token = encodeURIComponent(doc.filename);  // safe for onclick/URL
+        // Only show the delete button when admin mode is unlocked.
+        const deleteBtn = adminMode
+          ? `<button class="btn btn-sm btn-outline-danger ms-2"
+                     onclick="deleteFile('${token}')"> Delete </button>`
+          : "";
+        html += `
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <a href="${pdfUrl}" target="_blank" class="text-decoration-none">
+              ${escapeHtml(doc.filename)}
+            </a>
+            <span class="d-flex align-items-center">
+              <span class="text-muted small">
+                ${doc.pages} pages · ${doc.uploaded_at}
+              </span>
+              ${deleteBtn}
+            </span>
+          </li>`;
+      }
+      html += "</ul>";
+      libraryDiv.innerHTML = html;
+    }
+
+    // --- Admin mode: unlock, lock, and delete ---
+    let adminMode = false;
+    let adminPassword = "";
+
+    // Toggle: if already admin, lock; otherwise reveal the password box.
+    function toggleAdmin() {
+      if (adminMode) {
+        adminMode = false;
+        adminPassword = "";
+        document.getElementById("adminBtn").textContent = "Admin mode";
+        document.getElementById("adminBox").style.display = "none";
+        loadDocuments();
+      } else {
+        document.getElementById("adminBox").style.display = "flex";
+        document.getElementById("adminPass").focus();
+      }
+    }
+
+    // Verify the password with the server before unlocking.
+    async function unlockAdmin() {
+      const pass = document.getElementById("adminPass").value;
+      const response = await fetch("/admin/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pass }),
+      });
+      const data = await response.json();
+
+      if (data.ok) {
+        adminMode = true;
+        adminPassword = pass;
+        document.getElementById("adminBtn").textContent = "Exit admin";
+        document.getElementById("adminBox").style.display = "none";
+        document.getElementById("adminPass").value = "";
+        loadDocuments();  // re-render with delete buttons
+      } else {
+        showError("Incorrect admin password.");
+      }
+    }
+
+    // Delete a file (sends the admin password in a header the server checks).
+    async function deleteFile(token) {
+      const filename = decodeURIComponent(token);
+      if (!confirm(`Delete "${filename}"? This removes it from the search index.`)) {
+        return;
+      }
+      const response = await fetch("/documents/" + token, {
+        method: "DELETE",
+        headers: { "X-Admin-Password": adminPassword },
+      });
+      if (response.ok) {
+        loadDocuments();
+      } else {
+        showError("Delete failed — check your admin access.");
+      }
+    }
+
+    // Escapes text so it is shown literally (and can't break the page).
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Escapes characters that have special meaning in a regular expression.
+    function escapeRegex(text) {
+      return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    // Wraps every query word found in the excerpt with <mark> to highlight it.
+    function highlight(text, query) {
+      let safe = escapeHtml(text);
+      const words = [...new Set(
+        query.toLowerCase().split(/\s+/).filter(w => w.length >= 3)
+      )];
+      for (const word of words) {
+        const pattern = new RegExp("(" + escapeRegex(word) + ")", "gi");
+        safe = safe.replace(pattern, "<mark>$1</mark>");
+      }
+      return safe;
+    }
+
+    // Turns a similarity score (0-1) into a coloured relevance badge.
+    function relevanceBadge(score) {
+      if (score >= 0.45) return '<span class="badge bg-success">High</span>';
+      if (score >= 0.32) return '<span class="badge bg-warning text-dark">Medium</span>';
+      return '<span class="badge bg-secondary">Low</span>';
+    }
+
+    // --- Search: send the query to the /search endpoint ---
+    async function runSearch() {
+      const query = document.getElementById("queryInput").value.trim();
+      const resultsDiv = document.getElementById("results");
+
+      if (query === "") {
+        showError("Please type something to search.");
+        return;
+      }
+
+      resultsDiv.innerHTML =
+        '<div class="text-center text-muted">Searching...</div>';
+
+      const response = await fetch("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: query }),
+      });
+
+      const data = await response.json();
+
+      if (!data.results || data.results.length === 0) {
+        resultsDiv.innerHTML =
+          `<div class="alert alert-info">${data.message || "No matching results found."}</div>`;
+        return;
+      }
+
+      resultsDiv.innerHTML = "";
+      for (const item of data.results) {
+        const percent = (item.score * 100).toFixed(0);
+        const pdfUrl = `/pdfs/${encodeURIComponent(item.filename)}#page=${item.page}`;
+
+        const card = document.createElement("div");
+        card.className = "card shadow-sm mb-3";
+        card.innerHTML = `
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <a href="${pdfUrl}" target="_blank" class="fw-bold text-decoration-none">
+                ${escapeHtml(item.filename)}
+              </a>
+              <span class="text-muted small">Page ${item.page}</span>
+            </div>
+            <p class="excerpt mb-2">${highlight(item.text, query)}</p>
+            <div class="small text-muted">
+              ${relevanceBadge(item.score)} Similarity: ${percent}%
+            </div>
+          </div>`;
+        resultsDiv.appendChild(card);
+      }
+    }
+
+    // --- Evaluation: run /evaluate and display the metrics ---
+    async function runEvaluation() {
+      const div = document.getElementById("evalResults");
+      div.innerHTML = '<div class="text-muted">Running evaluation, please wait...</div>';
+      const response = await fetch("/evaluate");
+      const data = await response.json();
+
+      if (data.message) {  // e.g. no PDFs indexed
+        div.innerHTML = `<div class="alert alert-info">${data.message}</div>`;
+        return;
+      }
+
+      const m = data.metrics;
+      const cm = data.confusion_matrix;
+      const pct = v => (v === null ? "N/A" : (v * 100).toFixed(1) + "%");
+      // Metrics table.
+      let html = `
+        <div class="card shadow-sm mb-3">
+          <div class="card-body">
+            <h6 class="text-muted mb-3">Metrics
+              
+            </h6>
+            <table class="table table-sm mb-0">
+              <tr><td>Accuracy</td><td class="fw-bold">${pct(m.accuracy)}</td></tr>
+              <tr><td>Specificity</td><td class="fw-bold">${pct(m.specificity)}</td></tr>
+              <tr><td>AUC</td><td class="fw-bold">${m.auc === null ? "N/A" : m.auc}</td></tr>
+            </table>
+          </div>
+        </div>`;
+
+      // Confusion matrix.
+      html += `
+        <div class="card shadow-sm mb-3">
+          <div class="card-body">
+            <h6 class="text-muted mb-3">Confusion Matrix</h6>
+            <table class="table table-bordered text-center align-middle mb-0">
+              <tr>
+                <td></td>
+                <th class="small">Predicted: Relevant</th>
+                <th class="small">Predicted: Not relevant</th>
+              </tr>
+              <tr>
+                <th class="small">Actual: Relevant</th>
+                <td><div class="cm-cell cm-good">TP<br>${cm.tp}</div></td>
+                <td><div class="cm-cell cm-bad">FN<br>${cm.fn}</div></td>
+              </tr>
+              <tr>
+                <th class="small">Actual: Not relevant</th>
+                <td><div class="cm-cell cm-bad">FP<br>${cm.fp}</div></td>
+                <td><div class="cm-cell cm-good">TN<br>${cm.tn}</div></td>
+              </tr>
+            </table>
+          </div>
+        </div>`;
+
+
+      div.innerHTML = html;
+    }
+  </script>
+
+  <!-- Bootstrap JS (needed for the mobile navbar toggle) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

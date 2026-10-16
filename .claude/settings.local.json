@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(if \\(-not $?\\) { \"Folder not found or empty\" })",
+      "PowerShell(Get-ChildItem \"D:\\\\Senior_Project\" -Recurse -Exclude \"venv\",\"__pycache__\",\".claude\" | Where-Object { $_.FullName -notmatch \"venv|__pycache__|\\\\.claude\" } | Select-Object FullName)",
+      "Bash(D:/Senior_Project/venv/Scripts/python.exe -c ' *)"
+    ]
+  }
+}
